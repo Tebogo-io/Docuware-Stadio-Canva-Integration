@@ -29,7 +29,7 @@ DocuWare (STATUS = Process)
 ### Required Libraries
 Install using pip:
 ```
-pip install requests schedule
+pip install requests schedule pywin32
 ```
 
 ### Network Access
@@ -86,24 +86,186 @@ The following fields must exist on each document in the file cabinet:
 ```
 C:\Python Script\
     scriptsubmission.py       ← main script
+    submission_service.py     ← Windows service wrapper
+    run_submission.bat        ← batch file for Task Scheduler
     FilestoUpload\            ← temp folder for downloaded PDFs
-    Logs\                     ← daily log files
-        submission_2026-05-25.txt
-        submission_2026-05-26.txt
-        ...
+    Logs\
+        submission_2026-05-25.txt   ← daily submission logs
+        service_2026-05-25.txt      ← service-specific logs
+        scheduler.log               ← Task Scheduler output log
 ```
 
 ---
 
 ## How to Run
 
-Open a terminal and run:
-
+### Option A — Run directly from command prompt
 ```
 python "C:\Python Script\scriptsubmission.py"
 ```
+To stop press `Ctrl+C`.
 
-To stop the script press `Ctrl+C`.
+---
+
+## Deployment
+
+### Option 1 — Windows Task Scheduler
+
+Best for running on a schedule at specific times.
+
+#### Step 1 — Create batch file
+Create `run_submission.bat` in `C:\Python Script\`:
+
+```batch
+@echo off
+echo Starting DocuWare Canvas Submission Script...
+cd /d "C:\Python Script"
+python scriptsubmission.py >> "C:\Python Script\Logs\scheduler.log" 2>&1
+```
+
+#### Step 2 — Set up Task Scheduler
+
+1. Open **Task Scheduler** from the Start menu
+2. Click **Create Task**
+3. Fill in the tabs:
+
+**General tab:**
+```
+Name:        DocuWare Canvas Submission
+Description: Submits exam scripts from DocuWare to Canvas LMS
+Run whether user is logged on or not: ✅ checked
+Run with highest privileges: ✅ checked
+```
+
+**Triggers tab → New:**
+```
+Begin the task: At startup
+Repeat task every: 5 minutes
+For a duration of: Indefinitely
+Enabled: ✅ checked
+```
+
+**Actions tab → New:**
+```
+Action:     Start a program
+Program:    C:\Python Script\run_submission.bat
+Start in:   C:\Python Script
+```
+
+**Settings tab:**
+```
+Allow task to be run on demand: ✅ checked
+If the task fails, restart every: 1 minute
+Attempt to restart up to: 3 times
+Force stop if task does not end when requested: ✅ checked
+```
+
+4. Click **OK** and enter your Windows password when prompted
+
+---
+
+### Option 2 — Windows Service (Recommended for Production)
+
+Runs permanently in the background. Starts automatically with Windows and restarts itself if it crashes.
+
+#### Step 1 — Install pywin32
+```
+pip install pywin32
+```
+
+#### Step 2 — Update scriptsubmission.py
+
+Make sure the bottom of `scriptsubmission.py` has the `if __name__ == "__main__"` guard so it can be safely imported by the service:
+
+```python
+if __name__ == "__main__":
+    check_and_process()
+    schedule.every(5).minutes.do(check_and_process)
+    log.info("Scheduler running — checking every 5 minutes. Press Ctrl+C to stop.")
+    while True:
+        schedule.run_pending()
+        time.sleep(30)
+```
+
+#### Step 3 — Install the service
+Open **Command Prompt as Administrator** and run:
+
+```
+cd "C:\Python Script"
+python submission_service.py install
+```
+
+Expected output:
+```
+Installing service DocuWareCanvasService
+Service installed
+```
+
+#### Step 4 — Start the service
+```
+python submission_service.py start
+```
+
+Expected output:
+```
+Starting service DocuWareCanvasService
+Service started
+```
+
+#### Step 5 — Set automatic restart on failure
+```
+sc failure DocuWareCanvasService reset= 86400 actions= restart/5000/restart/5000/restart/5000
+```
+This restarts the service automatically up to 3 times if it crashes, waiting 5 seconds between each restart.
+
+#### Step 6 — Verify service is running
+```
+python submission_service.py status
+```
+Or open `services.msc` and look for **DocuWare Canvas Submission Service** — status should show **Running**.
+
+---
+
+### Service Management Commands
+
+Run these from Command Prompt as Administrator in `C:\Python Script\`:
+
+| Command | What it does |
+|---|---|
+| `python submission_service.py install` | Install the service |
+| `python submission_service.py start` | Start the service |
+| `python submission_service.py stop` | Stop the service |
+| `python submission_service.py restart` | Restart the service |
+| `python submission_service.py remove` | Uninstall the service |
+| `python submission_service.py status` | Check service status |
+
+---
+
+### Closing the Command Prompt
+
+Closing the command prompt after starting the service has **no effect** — the service keeps running in the background under Windows Service Control Manager.
+
+| Scenario | Service status |
+|---|---|
+| Close command prompt | ✅ Keeps running |
+| Log off Windows | ✅ Keeps running |
+| Restart PC | ✅ Starts automatically on boot |
+| Shutdown PC | ⏹ Stops — starts again on next boot |
+| Service crashes | ✅ Restarts automatically |
+| `python submission_service.py stop` | ⏹ Stops |
+
+---
+
+### Deployment Comparison
+
+| | Task Scheduler | Windows Service |
+|---|---|---|
+| Setup difficulty | Easy | Medium |
+| Runs without login | ✅ Yes | ✅ Yes |
+| Starts with Windows | ✅ Yes | ✅ Yes |
+| Auto restarts on crash | ❌ No (needs config) | ✅ Yes |
+| Visible in Services manager | ❌ No | ✅ Yes |
+| Best for | Simple scheduled runs | Production deployment |
 
 ---
 
@@ -148,8 +310,8 @@ Every 5 minutes → check for STATUS = Process documents
 
 To change the interval edit this line in the script:
 ```python
-schedule.every(5).minutes.do(check_and_process)   # every 5 minutes
-schedule.every(1).hours.do(check_and_process)      # every hour
+schedule.every(5).minutes.do(check_and_process)        # every 5 minutes
+schedule.every(1).hours.do(check_and_process)           # every hour
 schedule.every().day.at("08:00").do(check_and_process)  # daily at 8am
 ```
 
@@ -172,10 +334,16 @@ Submission run started: 2026-05-25 08:30:00
 Processing Doc ID: 316
 Student: EM100357 | Module: CBE262
 Course: 18455 | Assignment: 366253 | User: 38318
+Download started:   08:30:01
+Download ended:     08:30:03 (2.14s)
 Downloaded: EM100357_CBE262.pdf (4846272 bytes)
+Upload started:     08:30:03
+Upload ended:       08:30:05 (1.87s)
 Canvas upload session created
 Upload status: 201
 Uploaded File ID: 9313708
+Submission started: 08:30:05
+Submission ended:   08:30:06 (0.95s)
 Doc 316 successfully submitted to Canvas!
 DocuWare STATUS updated for Doc 316: Submitted
 Canvas File ID:  9313708
@@ -184,7 +352,18 @@ Upload File:     201 Created
 Submit File:     201 Created
 Cleaned up: C:\Python Script\FilestoUpload\EM100357_CBE262.pdf
 ==================================================
-All documents processed
+Run Summary
+==================================================
+Run started:        2026-05-25 08:30:00
+Run ended:          2026-05-25 08:30:06
+Total duration:     6.21s
+==================================================
+Total documents:    5
+Successful:         4
+Failed:             1
+Skipped:            0
+Accuracy:           80.0%
+==================================================
 ```
 
 ---
@@ -228,3 +407,6 @@ All documents processed
 | `No documents found` | No documents with `STATUS = Process` | Check DocuWare documents are correctly indexed |
 | `Upload failed — no file ID` | File upload to Inst-FS failed | Check network access to Canvas storage |
 | DocuWare fields not updating | Wrong field name | Verify field names match exactly in DocuWare |
+| `Service does not exist` on start | Service not installed yet | Run `python submission_service.py install` first |
+| Service fails to install | Not running as Administrator | Re-open Command Prompt as Administrator |
+| Service crashes on start | Import error in scriptsubmission.py | Check `Logs\service_YYYY-MM-DD.txt` for details |
