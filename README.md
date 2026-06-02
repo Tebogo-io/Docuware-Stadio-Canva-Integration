@@ -2,7 +2,7 @@
 
 ## Overview
 
-This script automates the submission of student exam scripts from **DocuWare** to **Canvas LMS**. It runs continuously, checking every 5 minutes for documents in DocuWare with a status of `Process` and automatically submitting them to the correct Canvas assignment on behalf of the student.
+This script automates the submission of student exam scripts from **DocuWare** to **Canvas LMS**. It runs continuously, checking every 10 seconds for documents in DocuWare with a status of `Process` and automatically submitting them to the correct Canvas assignment on behalf of the student.
 
 ---
 
@@ -85,13 +85,12 @@ The following fields must exist on each document in the file cabinet:
 
 ```
 C:\Python Script\
-    scriptsubmission.py       ← main script
+    script_submission.py       ← main script
     submission_service.py     ← Windows service wrapper
     run_submission.bat        ← batch file for Task Scheduler
     FilestoUpload\            ← temp folder for downloaded PDFs
     Logs\
         submission_2026-05-25.txt   ← daily submission logs
-        service_2026-05-25.txt      ← service-specific logs
         scheduler.log               ← Task Scheduler output log
 ```
 
@@ -101,7 +100,7 @@ C:\Python Script\
 
 ### Option A — Run directly from command prompt
 ```
-python "C:\Python Script\scriptsubmission.py"
+python "C:\Python Script\scrip_tsubmission.py"
 ```
 To stop press `Ctrl+C`.
 
@@ -120,7 +119,7 @@ Create `run_submission.bat` in `C:\Python Script\`:
 @echo off
 echo Starting DocuWare Canvas Submission Script...
 cd /d "C:\Python Script"
-python scriptsubmission.py >> "C:\Python Script\Logs\scheduler.log" 2>&1
+python script_submission.py >> "C:\Python Script\Logs\scheduler.log" 2>&1
 ```
 
 #### Step 2 — Set up Task Scheduler
@@ -173,18 +172,18 @@ Runs permanently in the background. Starts automatically with Windows and restar
 pip install pywin32
 ```
 
-#### Step 2 — Update scriptsubmission.py
+#### Step 2 — Update script_submission.py
 
-Make sure the bottom of `scriptsubmission.py` has the `if __name__ == "__main__"` guard so it can be safely imported by the service:
+Make sure the bottom of `script_submission.py` has the `if __name__ == "__main__"` guard so it can be safely imported by the service:
 
 ```python
 if __name__ == "__main__":
     check_and_process()
-    schedule.every(5).minutes.do(check_and_process)
-    log.info("Scheduler running — checking every 5 minutes. Press Ctrl+C to stop.")
+    schedule.every(10).seconds.do(check_and_process)
+    log.info("Scheduler running — checking every 10 seconds.")
     while True:
         schedule.run_pending()
-        time.sleep(30)
+        time.sleep(5)
 ```
 
 #### Step 3 — Install the service
@@ -310,6 +309,7 @@ Every 5 minutes → check for STATUS = Process documents
 
 To change the interval edit this line in the script:
 ```python
+schedule.every(10).seconds.do(check_and_process)        # every 10 seconds
 schedule.every(5).minutes.do(check_and_process)        # every 5 minutes
 schedule.every(1).hours.do(check_and_process)           # every hour
 schedule.every().day.at("08:00").do(check_and_process)  # daily at 8am
